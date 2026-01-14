@@ -1,57 +1,130 @@
+"""
+Модуль отчетности Jira
+
+Этот модуль предоставляет функциональность для получения данных из Jira, их обработки
+и генерации подробных отчетов в формате CSV. Поддерживает настраиваемые JQL-запросы,
+опции округления времени и создает как детальные отчеты по задачам, так и сводную статистику.
+
+Модуль может работать в трех режимах:
+1. Получение данных из Jira с использованием JQL и их обработка
+2. Обработка существующих JSON-файлов из входной директории
+3. Обработка JSON-файла, переданного в качестве аргумента командной строки
+
+Зависимости:
+    - json: Для обработки JSON-данных
+    - csv: Для генерации CSV-файлов
+    - os: Для операций с файловой системой
+    - sys: Для парсинга аргументов командной строки
+    - math: Для математических операций (функция ceil)
+    - datetime: Для генерации временных меток
+    - dotenv: Для загрузки переменных окружения
+    - lib.jira_client: Пользовательская реализация клиента Jira
+"""
+
 import json
 import csv
 import os
 import sys
 from math import ceil
-import logging
+# import logging
 from datetime import datetime
 
 # Load environment variables
 from dotenv import load_dotenv
 from lib.jira_client import JiraClient
-from lib.logger import setup_logger, check_existing_log, get_log_file_paths, write_log_entries
+# from lib.logger import setup_logger, check_existing_log, get_log_file_paths, write_log_entries
 
 # Load environment variables
 load_dotenv()
+# Конфигурация Jira
 JIRA_URL = os.getenv('JIRA_URL')
-JIRA_TOKEN = os.getenv('JIRA_TOKEN')
-MAX_RESULTS_PER_PAGE = int(os.getenv('MAX_RESULTS_PER_PAGE', 100))
-JQL = os.getenv('JQL', '')
-# ROUNDING_TYPE - тип округления времени: 'half_hour' (до получаса) или 'tenths' (до десятых)
-ROUNDING_TYPE = os.getenv('ROUNDING_TYPE', 'half_hour')
-INPUT_DIR = 'data/in'
-OUTPUT_DIR = 'data/out'
-CSV_DELIMITER = ','
+"""str или None: URL-адрес экземпляра Jira из переменных окружения"""
 
-# Initialize Jira client if credentials are available
+JIRA_TOKEN = os.getenv('JIRA_TOKEN')
+"""str или None: Токен API Jira из переменных окружения"""
+
+MAX_RESULTS_PER_PAGE = int(os.getenv('MAX_RESULTS_PER_PAGE', 100))
+"""int: Максимальное количество результатов на страницу для запросов Jira API"""
+
+JQL = os.getenv('JQL', '')
+"""str: Строка JQL-запроса для фильтрации задач Jira"""
+
+# ROUNDING_TYPE - тип округления времени: 'half_hour' (до получаса) или 'tenths' (до десятых)
+ROUNDING_TYPE = os.getenv('ROUNDING_TYPE', 'tehnts')
+"""str: Тип округления времени - 'half_hour' или 'tenths' (по умолчанию: 'tehnts')"""
+
+INPUT_DIR = 'data/in'
+"""str: Путь к директории входных JSON-файлов"""
+
+OUTPUT_DIR = 'data/out'
+"""str: Путь к директории выходных CSV-файлов"""
+
+CSV_DELIMITER = ','
+"""str: Символ-разделитель для CSV-файлов"""
+
+# Инициализация клиента Jira при наличии учетных данных
 jira_client = None
+"""JiraClient или None: Инициализированный экземпляр клиента Jira при наличии учетных данных"""
 if JIRA_URL and JIRA_TOKEN:
     jira_client = JiraClient(JIRA_URL, JIRA_TOKEN, MAX_RESULTS_PER_PAGE)
 
-def seconds_to_hours(seconds):
-    """Конвертирует секунды в часы с округлением в зависимости от ROUNDING_TYPE"""
+
+def seconds_to_hours(seconds, rounding = ROUNDING_TYPE):
+    """
+    Конвертирует секунды в часы с настраиваемым округлением.
+    
+    Аргументы:
+        seconds (int или None): Время в секундах для конвертации
+        rounding (str): Тип округления ('tenths' или 'half_hour')
+    
+    Возвращает:
+        float: Время, конвертированное в часы с указанным округлением
+               Возвращает 0, если seconds равно None
+    
+    Примеры:
+        >>> seconds_to_hours(3600)  # 1 час
+        1.0
+        >>> seconds_to_hours(5400, 'half_hour')  # 1.5 часа
+        1.5
+        >>> seconds_to_hours(3660, 'tenths')  # 1.0167 часа -> 1.0
+        1.0
+    """
     if seconds is None:
         return 0
     
     # Конвертируем секунды в часы
     hours = seconds / 3600
-    
+    rounded_hours = round(hours * 100) / 100
+
     # Округляем в зависимости от типа округления
-    if ROUNDING_TYPE == 'tenths':
+    if rounding == 'tenths':
         # Округляем до ближайшего 0.1 часа
         rounded_hours = round(hours * 10) / 10
-    else:
-        # По умолчанию округляем до ближайшего 0.5 часа
+    elif rounding == 'half_hour':
+        # Округляем до ближайшего 0.5 часа
         rounded_hours = ceil(hours * 2) / 2
-    
+        
     return rounded_hours
+
 
 def fetch_jira_data_to_json():
     """
-    Получает данные из Jira по JQL и сохраняет их в JSON файл
+    Получает данные из Jira с использованием JQL-запроса и сохраняет их в JSON-файл.
     
-    Returns:
-        str: путь к созданному JSON файлу или None в случае ошибки
+    Эта функция подключается к Jira с использованием настроенного клиента, выполняет JQL-запрос,
+    получает все соответствующие задачи и сохраняет их в JSON-файл с временной меткой в
+    выходной директории.
+    
+    Возвращает:
+        str или None: Путь к созданному JSON-файлу, или None в случае ошибки
+    
+    Выбрасывает:
+        Exception: Если возникли проблемы с подключением к Jira или получением данных
+    
+    Пример:
+        >>> json_path = fetch_jira_data_to_json()
+        >>> if json_path:
+        ...     print(f"Данные сохранены в: {json_path}")
     """
     if not jira_client:
         print("Ошибка: Не удалось инициализировать Jira клиент")
@@ -77,10 +150,10 @@ def fetch_jira_data_to_json():
         # Создаем имя файла с временной меткой
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         json_filename = f"jira_data_{timestamp}.json"
-        json_filepath = os.path.join(INPUT_DIR, json_filename)
+        json_filepath = os.path.join(OUTPUT_DIR, json_filename)
         
         # Создаем директорию если она не существует
-        os.makedirs(INPUT_DIR, exist_ok=True)
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
         
         # Сохраняем данные в JSON файл
         with open(json_filepath, 'w', encoding='utf-8') as file:
@@ -95,12 +168,31 @@ def fetch_jira_data_to_json():
         print(f"Ошибка при получении данных из Jira: {str(e)}")
         return None
 
+
 def process_jira_json(json_file_path):
     """
-    Обрабатывает JSON из Jira и создает два CSV файла
+    Обрабатывает JSON-данные Jira и создает два CSV-файла отчетов.
     
-    Args:
-        json_file_path (str): путь к JSON файлу
+    Эта функция читает задачи Jira из JSON-файла и генерирует два подробных отчета:
+    1. Детальный отчет по задачам с информацией по каждой задаче
+    2. Сводный отчет с агрегированной статистикой
+    
+    Функция извлекает различные поля из каждой задачи, включая:
+    - Базовая информация о задаче (код, тип, название, статус)
+    - Данные по учету времени (первоначальные оценки, затраченное время)
+    - Пользовательские поля (направление, бизнес-процесс, версия, эпик)
+    
+    Аргументы:
+        json_file_path (str): Путь к JSON-файлу, содержащему данные задач Jira
+    
+    Выбрасывает:
+        FileNotFoundError: Если указанный JSON-файл не существует
+        json.JSONDecodeError: Если JSON-файл содержит некорректные данные
+        Exception: Для других ошибок обработки
+    
+    Пример:
+        >>> process_jira_json('data/out/jira_data_20231201_120000.json')
+        # Создает два CSV-файла в директории data/out/
     """
     
     try:
@@ -110,9 +202,15 @@ def process_jira_json(json_file_path):
             return
         
         # Генерируем имена выходных файлов на основе входного файла
-        base_name = os.path.splitext(json_file_path)[0]
-        output_file1 = f"{base_name}_tasks_detailed_final.csv"
-        output_file2 = f"{base_name}_tasks_summary_final.csv"
+        # Извлекаем имя файла без пути и расширения
+        json_filename = os.path.basename(json_file_path)
+        base_name = os.path.splitext(json_filename)[0]
+        # Формируем пути к выходным файлам в OUTPUT_DIR
+        output_file1 = os.path.join(OUTPUT_DIR, f"{base_name}_tasks_detailed_final.csv")
+        output_file2 = os.path.join(OUTPUT_DIR, f"{base_name}_tasks_summary_final.csv")
+        
+        # Создаем директорию если она не существует
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
         
         # Чтение JSON файла
         with open(json_file_path, 'r', encoding='utf-8') as file:
@@ -277,9 +375,26 @@ def process_jira_json(json_file_path):
     except Exception as e:
         print(f"Произошла ошибка: {str(e)}")
 
+
 def main():
-    """Основная функция"""
-    # Проверяем, передан ли файл в командной строке
+    """
+    Основная точка входа для приложения отчетности Jira.
+    
+    Эта функция координирует весь процесс отчетности:
+    1. Проверяет аргументы командной строки на наличие входного файла
+    2. Ищет JSON-файлы во входной директории
+    3. Получает новые данные из Jira, если файлы не найдены
+    4. Обрабатывает данные и генерирует отчеты
+    
+    Функция реализует приоритетную обработку:
+    - Аргумент командной строки (наивысший приоритет)
+    - Файлы из входной директории (средний приоритет)  
+    - Получение данных из Jira API (низший приоритет, резервный вариант)
+    
+    Использование:
+        python reporting.py                          # Автоматический режим
+        python reporting.py data/in/custom_file.json # Конкретный файл
+    """
     if len(sys.argv) >= 2:
         input_file = sys.argv[1]
         print(f"Обрабатываем файл: {input_file}")
@@ -317,6 +432,6 @@ def main():
     else:
         print("Не удалось получить данные из Jira")
 
-# Пример использования
+
 if __name__ == "__main__":
         main()
