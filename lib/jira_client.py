@@ -104,6 +104,7 @@ class JiraClient:
         start_at = 0
         max_results = max_results_per_page or self.max_results_per_page
         all_issues = []
+        total_issues = 0
         
         while True:
             params = {
@@ -120,13 +121,24 @@ class JiraClient:
                 data = response.json()
                 issues = data.get('issues', [])
                 
+                # Get total count on first iteration
+                if total_issues == 0:
+                    total_issues = data.get('total', 0)
+                    if total_issues == 0:
+                        print("Найдено 0 задач")
+                        break
+                
                 if not issues:
                     break
                     
                 all_issues.extend(issues)
                 
+                # Display progress
+                current_end = start_at + len(issues)
+                print(f"Обработка задач Jira: {start_at + 1}-{current_end} из {total_issues}", end='\r')
+                
                 # Check if there are more issues
-                if start_at + len(issues) >= data.get('total', 0):
+                if current_end >= total_issues:
                     break
                     
                 start_at += len(issues)
@@ -134,5 +146,8 @@ class JiraClient:
             except requests.exceptions.RequestException as e:
                 logger.error('Failed to search issues. JQL: %s, Error: %s', jql_query, str(e))
                 break
+        
+        if total_issues > 0:
+            print(f"Завершено: обработано {len(all_issues)} задач")
                 
         return all_issues

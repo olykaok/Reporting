@@ -50,7 +50,7 @@ JQL = os.getenv('JQL', '')
 """str: Строка JQL-запроса для фильтрации задач Jira"""
 
 # ROUNDING_TYPE - тип округления времени: 'half_hour' (до получаса) или 'tenths' (до десятых)
-ROUNDING_TYPE = os.getenv('ROUNDING_TYPE', 'tehnts')
+ROUNDING_TYPE = os.getenv('ROUNDING_TYPE', 'tenths')
 """str: Тип округления времени - 'half_hour' или 'tenths' (по умолчанию: 'tehnts')"""
 
 INPUT_DIR = 'data/in'
@@ -74,27 +74,28 @@ def seconds_to_hours(seconds, rounding = ROUNDING_TYPE):
     Конвертирует секунды в часы с настраиваемым округлением.
     
     Аргументы:
-        seconds (int или None): Время в секундах для конвертации
+        seconds (int | None): Время в секундах для конвертации
         rounding (str): Тип округления ('tenths' или 'half_hour')
     
     Возвращает:
-        float: Время, конвертированное в часы с указанным округлением
-               Возвращает 0, если seconds равно None
+        str: Время, конвертированное в часы с указанным округлением в виде строки с запятой как разделителем
+             Возвращает "0" если seconds равно None
     
     Примеры:
         >>> seconds_to_hours(3600)  # 1 час
-        1.0
+        '1'
         >>> seconds_to_hours(5400, 'half_hour')  # 1.5 часа
-        1.5
+        '1,5'
         >>> seconds_to_hours(3660, 'tenths')  # 1.0167 часа -> 1.0
-        1.0
+        '1'
+        >>> seconds_to_hours(7200, 'tenths')  # 2 часа
+        '2'
     """
     if seconds is None:
-        return 0
+        return "0"
     
     # Конвертируем секунды в часы
     hours = seconds / 3600
-    rounded_hours = round(hours * 100) / 100
 
     # Округляем в зависимости от типа округления
     if rounding == 'tenths':
@@ -103,8 +104,19 @@ def seconds_to_hours(seconds, rounding = ROUNDING_TYPE):
     elif rounding == 'half_hour':
         # Округляем до ближайшего 0.5 часа
         rounded_hours = ceil(hours * 2) / 2
-        
-    return rounded_hours
+    else:
+        # По умолчанию округляем до ближайшего 0.1 часа
+        rounded_hours = round(hours * 10) / 10
+    
+    # Преобразуем в строку и заменяем точку на запятую
+    hours_str = str(rounded_hours)
+    hours_str = hours_str.replace('.', ',')
+    
+    # Удаляем ненужные нули после запятой (например, "1,0" -> "1")
+    if ',' in hours_str:
+        hours_str = hours_str.rstrip('0').rstrip(',')
+    
+    return hours_str
 
 
 def fetch_jira_data_to_json():
