@@ -30,6 +30,38 @@ class JiraClient:
         self.issue_cache: Dict[str, Dict[str, Any]] = {}
         self.max_results_per_page = max_results_per_page
         
+    def get_issue(self, issue_key: str) -> Optional[Dict[str, Any]]:
+        """
+        Get the full data structure of a Jira issue.
+        
+        Args:
+            issue_key: Jira issue key (e.g., "GRA-444")
+            
+        Returns:
+            Full issue data structure or None if not found
+        """
+        if issue_key in self.issue_cache:
+            return self.issue_cache[issue_key]
+            
+        url = f'{self.base_url}/rest/api/2/issue/{issue_key}'
+        
+        try:
+            response = self.session.get(url, auth=self.auth, timeout=10)
+            response.raise_for_status()
+            
+            issue_data = response.json()
+            summary = issue_data.get('fields', {}).get('summary')
+            if summary:
+                self.issue_cache[issue_key] = issue_data
+                return issue_data
+                
+            logger.error('Issue %s found, but has no summary field', issue_key)
+            return None
+            
+        except requests.exceptions.RequestException as re:
+            logger.error('Failed to fetch issue %s. Error: %s', issue_key, str(re))
+            return None
+            
     def get_issue_summary(self, issue_key: str) -> Optional[str]:
         """
         Get the summary of a Jira issue.
@@ -40,29 +72,10 @@ class JiraClient:
         Returns:
             Summary of the issue or None if not found
         """
-        if issue_key in self.issue_cache:
-            return self.issue_cache[issue_key]['summary']
-            
-        url = f'{self.base_url}/rest/api/2/issue/{issue_key}'
-        
-        try:
-            response = self.session.get(url, auth=self.auth, timeout=10)
-            response.raise_for_status()
-            
-            summary = response.json().get('fields', {}).get('summary')
-            if summary:
-                self.issue_cache[issue_key] = {
-                    'summary': summary,
-                    'key': issue_key
-                }
-                return summary
-                
-            logger.error('Issue %s found, but has no summary field', issue_key)
-            return None
-            
-        except requests.exceptions.RequestException as re:
-            logger.error('Failed to fetch issue %s. Error: %s', issue_key, str(re))
-            return None
+        issue_data = self.get_issue(issue_key)
+        if issue_data:
+            return issue_data.get('fields', {}).get('summary')
+        return None
             
     def create_worklog(self, issue_key: str, work_data: Dict[str, Any]) -> bool:
         """
@@ -136,7 +149,8 @@ class JiraClient:
                 # Display progress
                 current_end = start_at + len(issues)
                 print(f"Обработка задач Jira: {start_at + 1}-{current_end} из {total_issues}", end='\r')
-                
+                time.sleep(2)
+
                 # Check if there are more issues
                 if current_end >= total_issues:
                     break

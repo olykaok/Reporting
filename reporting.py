@@ -289,6 +289,18 @@ def process_jira_json(json_file_path):
             if epic_task_key and jira_client:
                 epic_name = jira_client.get_issue_summary(epic_task_key) or ''
             
+            # Исполнитель эпика из assignee
+            assignee_display_name = ''
+            if epic_task_key and jira_client:
+                epic_issue_data = jira_client.get_issue(epic_task_key)
+                if epic_issue_data:
+                    assignee = epic_issue_data.get('fields', {}).get('assignee')
+                    if assignee:
+                        display_name = assignee.get('displayName', '')
+                        if not assignee.get('active', True):
+                            display_name += ' (неактивный)'
+                        assignee_display_name = display_name
+            
             # Конвертируем в часы
             time_original_estimate_hours = seconds_to_hours(time_original_estimate)
             aggregate_time_original_estimate_hours = seconds_to_hours(aggregate_time_original_estimate)
@@ -309,7 +321,8 @@ def process_jira_json(json_file_path):
                 business_process,
                 version,
                 epic_task_key,
-                epic_name
+                epic_name,
+                assignee_display_name
             ])
             
             # Суммируем для сводной статистики
@@ -340,7 +353,8 @@ def process_jira_json(json_file_path):
                 'Бизнес-процесс',
                 'Версия',
                 'Задача Эпика',
-                'Эпик'
+                'Эпик',
+                'Исполнитель эпика'
             ])
             # Данные
             writer.writerows(detailed_data)
